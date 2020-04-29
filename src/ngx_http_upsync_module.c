@@ -875,25 +875,27 @@ ngx_http_upsync_add_peers(ngx_cycle_t *cycle,
             peer->next = peers->peer;
             peers->peer = peer;
 
-// #if (NGX_HTTP_UPSTREAM_CHECK) 
-//             ngx_uint_t index;
-//             ngx_addr_t *addrs;
+#if (NGX_HTTP_UPSTREAM_CHECK) 
+            ngx_uint_t index;
+            ngx_addr_t *addrs;
 
-//             //TODO: it's a little trick, a issue with upstream_check_module
-//             // add/del interface, not rely on addrs of check_peers;
-//             addrs = ngx_pcalloc(ngx_cycle->pool, sizeof(ngx_addr_t));
-//             if (addrs == NULL) {
-//                 goto invalid;
-//             }
-//             addrs->name.data = peer->name.data;
-//             addrs->name.len = peer->name.len;
-//             addrs->sockaddr = peer->sockaddr;
-//             addrs->socklen = peer->socklen;
+            //TODO: it's a little trick, a issue with upstream_check_module
+            // add/del interface, not rely on addrs of check_peers;
+            if (!server->down) {
+                addrs = ngx_pcalloc(ngx_cycle->pool, sizeof(ngx_addr_t));
+                if (addrs == NULL) {
+                    goto invalid;
+                }
+                addrs->name.data = peer->name.data;
+                addrs->name.len = peer->name.len;
+                addrs->sockaddr = peer->sockaddr;
+                addrs->socklen = peer->socklen;
 
-//             index = ngx_http_upstream_check_add_dynamic_peer(cycle->pool, 
-//                                                              uscf, addrs);
-//             peer->check_index = index;
-// #endif
+                index = ngx_http_upstream_check_add_dynamic_peer(cycle->pool, 
+                                                                uscf, addrs);
+                peer->check_index = index;
+            }
+#endif
             w += server->weight;
         }
         w += peers->total_weight;
@@ -1031,6 +1033,24 @@ ngx_http_upsync_diff_filter(ngx_cycle_t *cycle,
             if (ngx_memn2cmp(peer->name.data, upstream_conf->sockaddr,
                              peer->name.len,
                              ngx_strlen(upstream_conf->sockaddr)) == 0) {
+#ifdef NGX_HTTP_UPSTREAM_CHECK
+                // update upstream check
+                ngx_uint_t index;
+                ngx_addr_t *addrs;
+                if (peer->down && !upstream_conf->down) {
+                    addrs = ngx_http_upsync_addrs(ctx->pool, 
+                                                  upstream_conf->sockaddr);
+                    index = ngx_http_upstream_check_add_dynamic_peer(
+                                                      cycle->pool, uscf, addrs);
+                    peer->check_index = index;
+                } else if (!peer->down && upstream_conf->down) {
+                    addrs = ngx_http_upsync_addrs(ctx->pool, 
+                                                  upstream_conf->sockaddr);
+                    ngx_http_upstream_check_delete_dynamic_peer(peers->name,
+                                                                addrs);
+                    peer->check_index = NGX_ERROR;
+                }
+#endif
                 // update peer
                 ngx_http_upsync_update_peer(peers, peer, upstream_conf, &updated);
                 *diff |= updated;
@@ -1122,10 +1142,12 @@ ngx_http_upsync_del_peers(ngx_cycle_t *cycle,
                              len, len) == 0)
             {
 
-// #if (NGX_HTTP_UPSTREAM_CHECK) 
-//                 ngx_http_upstream_check_delete_dynamic_peer(
-//                                                     peers->name, server->addrs);
-// #endif
+#if (NGX_HTTP_UPSTREAM_CHECK) 
+                if (!peer->down) {
+                    ngx_http_upstream_check_delete_dynamic_peer(
+                                                    peers->name, server->addrs);
+                }
+#endif
                 if (del_peer == NULL) {
                     del_peer = peer;
                     tmp_del_peer = peer;
@@ -1231,9 +1253,9 @@ ngx_http_upsync_replace_peers(ngx_cycle_t *cycle,
 
             peer->conns = 0;
 
-// #if (NGX_HTTP_UPSTREAM_CHECK) 
-//             peer->check_index = tmp_peer[i].check_index;
-// #endif
+#if (NGX_HTTP_UPSTREAM_CHECK) 
+            peer->check_index = tmp_peer[i].check_index;
+#endif
             peer->next = peers->peer;
             peers->peer = peer;
 
